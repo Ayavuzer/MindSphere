@@ -12,9 +12,17 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  // Get tenant ID from localStorage for header
+  const currentTenantId = localStorage.getItem('currentTenantId');
+  
+  const headers: Record<string, string> = {
+    ...(data ? { "Content-Type": "application/json" } : {}),
+    ...(currentTenantId ? { "X-Tenant-ID": currentTenantId } : {}),
+  };
+
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -29,8 +37,16 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
+    // Get tenant ID from localStorage for header
+    const currentTenantId = localStorage.getItem('currentTenantId');
+    
+    const headers: Record<string, string> = {
+      ...(currentTenantId ? { "X-Tenant-ID": currentTenantId } : {}),
+    };
+
     const res = await fetch(queryKey[0] as string, {
       credentials: "include",
+      headers,
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
@@ -48,10 +64,24 @@ export const queryClient = new QueryClient({
       refetchInterval: false,
       refetchOnWindowFocus: false,
       staleTime: Infinity,
-      retry: false,
+      retry: (failureCount, error) => {
+        // Don't retry on 4xx errors (client errors)
+        if (error instanceof Error && error.message.startsWith('4')) {
+          return false;
+        }
+        // Retry up to 2 times for other errors
+        return failureCount < 2;
+      },
     },
     mutations: {
-      retry: false,
+      retry: (failureCount, error) => {
+        // Don't retry mutations on 4xx errors
+        if (error instanceof Error && error.message.startsWith('4')) {
+          return false;
+        }
+        // Retry once for 5xx errors
+        return failureCount < 1;
+      },
     },
   },
 });

@@ -1,7 +1,8 @@
 import { Link, useLocation } from 'wouter';
 import { useAuth } from '@/hooks/useAuth';
+import { TenantSwitcher } from '@/components/tenant/tenant-switcher';
+import { UserProfileDropdown } from '@/components/user-profile-dropdown';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { 
   Brain, 
   MessageSquare, 
@@ -13,11 +14,14 @@ import {
   Wallet, 
   Mail, 
   Home,
-  Settings,
-  User
+  BookOpen
 } from 'lucide-react';
 
-export function Sidebar() {
+interface SidebarProps {
+  onClose?: () => void;
+}
+
+export function Sidebar({ onClose }: SidebarProps = {}) {
   const { user } = useAuth();
   const [location] = useLocation();
 
@@ -32,6 +36,7 @@ export function Sidebar() {
   const lifeModules = [
     { path: '/health', icon: Heart, label: 'Health', active: location === '/health' },
     { path: '/finance', icon: Wallet, label: 'Finance', active: location === '/finance' },
+    { path: '/journal', icon: BookOpen, label: 'Journal', active: location === '/journal' },
     { path: '/communications', icon: Mail, label: 'Communications', active: location === '/communications' },
     { path: '/smart-home', icon: Home, label: 'Smart Home', active: location === '/smart-home' },
   ];
@@ -51,6 +56,14 @@ export function Sidebar() {
         </div>
       </div>
 
+      {/* Tenant Switcher */}
+      <div className="p-4 border-b border-gray-800">
+        <div className="space-y-2">
+          <p className="text-xs text-[var(--text-secondary)] mb-2 px-1">WORKSPACE</p>
+          <TenantSwitcher />
+        </div>
+      </div>
+
       {/* Navigation Menu */}
       <nav className="flex-1 p-4 space-y-2">
         <div className="space-y-1">
@@ -61,6 +74,7 @@ export function Sidebar() {
                 className={`w-full justify-start sidebar-nav-item ${
                   item.active ? 'active' : ''
                 }`}
+                onClick={() => onClose?.()}
               >
                 <item.icon size={20} className="mr-3" />
                 {item.label}
@@ -79,6 +93,7 @@ export function Sidebar() {
                   className={`w-full justify-start sidebar-nav-item ${
                     item.active ? 'active' : ''
                   }`}
+                  onClick={() => onClose?.()}
                 >
                   <item.icon size={20} className="mr-3" />
                   {item.label}
@@ -91,23 +106,7 @@ export function Sidebar() {
 
       {/* User Profile */}
       <div className="p-4 border-t border-gray-800">
-        <div className="flex items-center space-x-3">
-          <Avatar className="w-10 h-10">
-            <AvatarImage src={user?.profileImageUrl || ''} alt="User" />
-            <AvatarFallback className="bg-gradient-to-br from-green-400 to-blue-500">
-              <User className="text-white" size={20} />
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1">
-            <p className="text-sm font-medium text-white">
-              {user?.firstName || user?.email || 'User'}
-            </p>
-            <p className="text-xs text-[var(--text-secondary)]">Premium User</p>
-          </div>
-          <Button variant="ghost" size="sm" className="p-2">
-            <Settings size={16} />
-          </Button>
-        </div>
+        <UserProfileDropdown size="md" showLabel={true} />
       </div>
     </div>
   );

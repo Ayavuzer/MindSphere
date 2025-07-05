@@ -4,6 +4,7 @@ export interface User {
   firstName?: string;
   lastName?: string;
   profileImageUrl?: string;
+  globalRole?: 'user' | 'admin' | 'superadmin';
   createdAt?: Date;
   updatedAt?: Date;
 }

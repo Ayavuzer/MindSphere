@@ -1,5 +1,7 @@
 import {
   users,
+  tenants,
+  tenantUsers,
   conversations,
   messages,
   tasks,
@@ -10,6 +12,11 @@ import {
   userPreferences,
   type User,
   type UpsertUser,
+  type Tenant,
+  type InsertTenant,
+  type TenantUser,
+  type InsertTenantUser,
+  type TenantMembership,
   type Conversation,
   type InsertConversation,
   type Message,
@@ -31,50 +38,69 @@ import { db } from "./db";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 
 export interface IStorage {
-  // User operations (mandatory for Replit Auth)
+  // User operations
   getUser(id: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
+  getAllUsers(): Promise<User[]>;
+  updateUserRole(userId: string, globalRole: string): Promise<User>;
+  deleteUser(userId: string): Promise<void>;
+  
+  // Tenant operations
+  getTenant(id: string): Promise<Tenant | undefined>;
+  getTenantBySlug(slug: string): Promise<Tenant | undefined>;
+  createTenant(tenant: InsertTenant): Promise<Tenant>;
+  updateTenant(id: string, updates: Partial<Tenant>): Promise<Tenant>;
+  deleteTenant(id: string): Promise<void>;
+  
+  // Tenant user operations
+  getTenantMembership(tenantId: string, userId: string): Promise<TenantUser | undefined>;
+  getUserTenants(userId: string): Promise<TenantMembership[]>;
+  addUserToTenant(membership: InsertTenantUser): Promise<TenantUser>;
+  updateTenantUserRole(tenantId: string, userId: string, role: string): Promise<TenantUser>;
+  removeUserFromTenant(tenantId: string, userId: string): Promise<void>;
+  userHasTenantAccess(userId: string, tenantId: string): Promise<boolean>;
   
   // Conversation operations
-  getConversations(userId: string): Promise<Conversation[]>;
-  getConversation(id: string, userId: string): Promise<Conversation | undefined>;
+  getConversations(tenantId: string, userId?: string): Promise<Conversation[]>;
+  getConversation(id: string, tenantId: string, userId?: string): Promise<Conversation | undefined>;
   createConversation(conversation: InsertConversation): Promise<Conversation>;
   updateConversation(id: string, updates: Partial<Conversation>): Promise<Conversation>;
   
   // Message operations
-  getMessages(conversationId: string): Promise<Message[]>;
+  getMessages(conversationId: string, tenantId: string): Promise<Message[]>;
   createMessage(message: InsertMessage): Promise<Message>;
   
   // Task operations
-  getTasks(userId: string): Promise<Task[]>;
+  getTasks(tenantId: string, userId?: string): Promise<Task[]>;
   createTask(task: InsertTask): Promise<Task>;
   updateTask(id: string, updates: Partial<Task>): Promise<Task>;
   deleteTask(id: string): Promise<void>;
   
   // Health operations
-  getHealthEntries(userId: string, startDate?: Date, endDate?: Date): Promise<HealthEntry[]>;
+  getHealthEntries(tenantId: string, userId?: string, startDate?: Date, endDate?: Date): Promise<HealthEntry[]>;
   createHealthEntry(entry: InsertHealthEntry): Promise<HealthEntry>;
-  getLatestHealthEntry(userId: string): Promise<HealthEntry | undefined>;
+  getLatestHealthEntry(tenantId: string, userId: string): Promise<HealthEntry | undefined>;
   
   // Financial operations
-  getFinancialEntries(userId: string, startDate?: Date, endDate?: Date): Promise<FinancialEntry[]>;
+  getFinancialEntries(tenantId: string, userId?: string, startDate?: Date, endDate?: Date): Promise<FinancialEntry[]>;
   createFinancialEntry(entry: InsertFinancialEntry): Promise<FinancialEntry>;
   
   // Mood operations
-  getMoodEntries(userId: string, startDate?: Date, endDate?: Date): Promise<MoodEntry[]>;
+  getMoodEntries(tenantId: string, userId?: string, startDate?: Date, endDate?: Date): Promise<MoodEntry[]>;
   createMoodEntry(entry: InsertMoodEntry): Promise<MoodEntry>;
-  getLatestMoodEntry(userId: string): Promise<MoodEntry | undefined>;
+  getLatestMoodEntry(tenantId: string, userId: string): Promise<MoodEntry | undefined>;
   
   // Journal operations
-  getJournalEntries(userId: string, startDate?: Date, endDate?: Date): Promise<JournalEntry[]>;
+  getJournalEntries(tenantId: string, userId?: string, startDate?: Date, endDate?: Date): Promise<JournalEntry[]>;
   createJournalEntry(entry: InsertJournalEntry): Promise<JournalEntry>;
   
   // User preferences
-  getUserPreferences(userId: string): Promise<UserPreferences | undefined>;
+  getUserPreferences(tenantId: string, userId: string): Promise<UserPreferences | undefined>;
   upsertUserPreferences(preferences: InsertUserPreferences): Promise<UserPreferences>;
   
   // Analytics
-  getUserStats(userId: string): Promise<{
+  getUserStats(tenantId: string, userId?: string): Promise<{
     totalTasks: number;
     completedTasks: number;
     avgMood: number;
@@ -90,12 +116,17 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
   async upsertUser(userData: UpsertUser): Promise<User> {
     const [user] = await db
       .insert(users)
       .values(userData)
       .onConflictDoUpdate({
-        target: users.id,
+        target: users.email,
         set: {
           ...userData,
           updatedAt: new Date(),
@@ -105,20 +136,148 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async getAllUsers(): Promise<User[]> {
+    return await db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async updateUserRole(userId: string, globalRole: string): Promise<User> {
+    const [updatedUser] = await db
+      .update(users)
+      .set({ globalRole, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return updatedUser;
+  }
+
+  async deleteUser(userId: string): Promise<void> {
+    // Delete user cascades will handle related data
+    await db.delete(users).where(eq(users.id, userId));
+  }
+
+  // Tenant operations
+  async getTenant(id: string): Promise<Tenant | undefined> {
+    const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id));
+    return tenant;
+  }
+
+  async getTenantBySlug(slug: string): Promise<Tenant | undefined> {
+    const [tenant] = await db.select().from(tenants).where(eq(tenants.slug, slug));
+    return tenant;
+  }
+
+  async createTenant(tenantData: InsertTenant): Promise<Tenant> {
+    const [tenant] = await db
+      .insert(tenants)
+      .values(tenantData)
+      .returning();
+    return tenant;
+  }
+
+  async updateTenant(id: string, updates: Partial<Tenant>): Promise<Tenant> {
+    const [updatedTenant] = await db
+      .update(tenants)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(tenants.id, id))
+      .returning();
+    return updatedTenant;
+  }
+
+  async deleteTenant(id: string): Promise<void> {
+    await db.delete(tenants).where(eq(tenants.id, id));
+  }
+
+  // Tenant user operations
+  async getTenantMembership(tenantId: string, userId: string): Promise<TenantUser | undefined> {
+    const [membership] = await db
+      .select()
+      .from(tenantUsers)
+      .where(and(eq(tenantUsers.tenantId, tenantId), eq(tenantUsers.userId, userId)));
+    return membership;
+  }
+
+  async getUserTenants(userId: string): Promise<TenantMembership[]> {
+    const results = await db
+      .select({
+        tenant: tenants,
+        role: tenantUsers.role,
+        status: tenantUsers.status,
+        joinedAt: tenantUsers.joinedAt,
+      })
+      .from(tenantUsers)
+      .innerJoin(tenants, eq(tenantUsers.tenantId, tenants.id))
+      .where(and(eq(tenantUsers.userId, userId), eq(tenantUsers.status, 'active')))
+      .orderBy(tenantUsers.joinedAt);
+
+    return results.map(result => ({
+      tenant: result.tenant,
+      role: result.role as any,
+      status: result.status || 'active',
+      joinedAt: result.joinedAt,
+    }));
+  }
+
+  async addUserToTenant(membershipData: InsertTenantUser): Promise<TenantUser> {
+    const [membership] = await db
+      .insert(tenantUsers)
+      .values(membershipData)
+      .returning();
+    return membership;
+  }
+
+  async updateTenantUserRole(tenantId: string, userId: string, role: string): Promise<TenantUser> {
+    const [updatedMembership] = await db
+      .update(tenantUsers)
+      .set({ role })
+      .where(and(eq(tenantUsers.tenantId, tenantId), eq(tenantUsers.userId, userId)))
+      .returning();
+    return updatedMembership;
+  }
+
+  async removeUserFromTenant(tenantId: string, userId: string): Promise<void> {
+    await db
+      .delete(tenantUsers)
+      .where(and(eq(tenantUsers.tenantId, tenantId), eq(tenantUsers.userId, userId)));
+  }
+
+  async userHasTenantAccess(userId: string, tenantId: string): Promise<boolean> {
+    const [membership] = await db
+      .select()
+      .from(tenantUsers)
+      .where(and(
+        eq(tenantUsers.userId, userId),
+        eq(tenantUsers.tenantId, tenantId),
+        eq(tenantUsers.status, 'active')
+      ))
+      .limit(1);
+    return !!membership;
+  }
+
   // Conversation operations
-  async getConversations(userId: string): Promise<Conversation[]> {
+  async getConversations(tenantId: string, userId?: string): Promise<Conversation[]> {
+    let whereClause = eq(conversations.tenantId, tenantId);
+    
+    if (userId) {
+      whereClause = and(whereClause, eq(conversations.userId, userId))!;
+    }
+
     return await db
       .select()
       .from(conversations)
-      .where(eq(conversations.userId, userId))
+      .where(whereClause)
       .orderBy(desc(conversations.updatedAt));
   }
 
-  async getConversation(id: string, userId: string): Promise<Conversation | undefined> {
+  async getConversation(id: string, tenantId: string, userId?: string): Promise<Conversation | undefined> {
+    let whereClause = and(eq(conversations.id, id), eq(conversations.tenantId, tenantId));
+    
+    if (userId) {
+      whereClause = and(whereClause, eq(conversations.userId, userId));
+    }
+
     const [conversation] = await db
       .select()
       .from(conversations)
-      .where(and(eq(conversations.id, id), eq(conversations.userId, userId)));
+      .where(whereClause);
     return conversation;
   }
 
@@ -140,7 +299,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Message operations
-  async getMessages(conversationId: string): Promise<Message[]> {
+  async getMessages(conversationId: string, tenantId: string): Promise<Message[]> {
+    // Note: tenantId is validated through conversation ownership
     return await db
       .select()
       .from(messages)
@@ -157,11 +317,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Task operations
-  async getTasks(userId: string): Promise<Task[]> {
+  async getTasks(tenantId: string, userId?: string): Promise<Task[]> {
+    let whereClause = eq(tasks.tenantId, tenantId);
+    
+    if (userId) {
+      whereClause = and(whereClause, eq(tasks.userId, userId))!;
+    }
+    
     return await db
       .select()
       .from(tasks)
-      .where(eq(tasks.userId, userId))
+      .where(whereClause)
       .orderBy(desc(tasks.createdAt));
   }
 
@@ -187,18 +353,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Health operations
-  async getHealthEntries(userId: string, startDate?: Date, endDate?: Date): Promise<HealthEntry[]> {
-    let query = db.select().from(healthEntries).where(eq(healthEntries.userId, userId));
+  async getHealthEntries(tenantId: string, userId?: string, startDate?: Date, endDate?: Date): Promise<HealthEntry[]> {
+    let whereClause = eq(healthEntries.tenantId, tenantId);
     
-    if (startDate && endDate) {
-      query = query.where(and(
-        eq(healthEntries.userId, userId),
-        gte(healthEntries.date, startDate),
-        lte(healthEntries.date, endDate)
-      ));
+    if (userId) {
+      whereClause = and(whereClause, eq(healthEntries.userId, userId))!;
     }
     
-    return await query.orderBy(desc(healthEntries.date));
+    if (startDate && endDate) {
+      whereClause = and(
+        whereClause,
+        gte(healthEntries.date, startDate),
+        lte(healthEntries.date, endDate)
+      )!;
+    }
+    
+    return await db
+      .select()
+      .from(healthEntries)
+      .where(whereClause)
+      .orderBy(desc(healthEntries.date));
   }
 
   async createHealthEntry(entry: InsertHealthEntry): Promise<HealthEntry> {
@@ -209,29 +383,37 @@ export class DatabaseStorage implements IStorage {
     return newEntry;
   }
 
-  async getLatestHealthEntry(userId: string): Promise<HealthEntry | undefined> {
+  async getLatestHealthEntry(tenantId: string, userId: string): Promise<HealthEntry | undefined> {
     const [entry] = await db
       .select()
       .from(healthEntries)
-      .where(eq(healthEntries.userId, userId))
+      .where(and(eq(healthEntries.tenantId, tenantId), eq(healthEntries.userId, userId)))
       .orderBy(desc(healthEntries.date))
       .limit(1);
     return entry;
   }
 
   // Financial operations
-  async getFinancialEntries(userId: string, startDate?: Date, endDate?: Date): Promise<FinancialEntry[]> {
-    let query = db.select().from(financialEntries).where(eq(financialEntries.userId, userId));
+  async getFinancialEntries(tenantId: string, userId?: string, startDate?: Date, endDate?: Date): Promise<FinancialEntry[]> {
+    let whereClause = eq(financialEntries.tenantId, tenantId);
     
-    if (startDate && endDate) {
-      query = query.where(and(
-        eq(financialEntries.userId, userId),
-        gte(financialEntries.date, startDate),
-        lte(financialEntries.date, endDate)
-      ));
+    if (userId) {
+      whereClause = and(whereClause, eq(financialEntries.userId, userId))!;
     }
     
-    return await query.orderBy(desc(financialEntries.date));
+    if (startDate && endDate) {
+      whereClause = and(
+        whereClause,
+        gte(financialEntries.date, startDate),
+        lte(financialEntries.date, endDate)
+      )!;
+    }
+    
+    return await db
+      .select()
+      .from(financialEntries)
+      .where(whereClause)
+      .orderBy(desc(financialEntries.date));
   }
 
   async createFinancialEntry(entry: InsertFinancialEntry): Promise<FinancialEntry> {
@@ -243,18 +425,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Mood operations
-  async getMoodEntries(userId: string, startDate?: Date, endDate?: Date): Promise<MoodEntry[]> {
-    let query = db.select().from(moodEntries).where(eq(moodEntries.userId, userId));
+  async getMoodEntries(tenantId: string, userId?: string, startDate?: Date, endDate?: Date): Promise<MoodEntry[]> {
+    let whereClause = eq(moodEntries.tenantId, tenantId);
     
-    if (startDate && endDate) {
-      query = query.where(and(
-        eq(moodEntries.userId, userId),
-        gte(moodEntries.date, startDate),
-        lte(moodEntries.date, endDate)
-      ));
+    if (userId) {
+      whereClause = and(whereClause, eq(moodEntries.userId, userId))!;
     }
     
-    return await query.orderBy(desc(moodEntries.date));
+    if (startDate && endDate) {
+      whereClause = and(
+        whereClause,
+        gte(moodEntries.date, startDate),
+        lte(moodEntries.date, endDate)
+      )!;
+    }
+    
+    return await db
+      .select()
+      .from(moodEntries)
+      .where(whereClause)
+      .orderBy(desc(moodEntries.date));
   }
 
   async createMoodEntry(entry: InsertMoodEntry): Promise<MoodEntry> {
@@ -265,29 +455,37 @@ export class DatabaseStorage implements IStorage {
     return newEntry;
   }
 
-  async getLatestMoodEntry(userId: string): Promise<MoodEntry | undefined> {
+  async getLatestMoodEntry(tenantId: string, userId: string): Promise<MoodEntry | undefined> {
     const [entry] = await db
       .select()
       .from(moodEntries)
-      .where(eq(moodEntries.userId, userId))
+      .where(and(eq(moodEntries.tenantId, tenantId), eq(moodEntries.userId, userId)))
       .orderBy(desc(moodEntries.date))
       .limit(1);
     return entry;
   }
 
   // Journal operations
-  async getJournalEntries(userId: string, startDate?: Date, endDate?: Date): Promise<JournalEntry[]> {
-    let query = db.select().from(journalEntries).where(eq(journalEntries.userId, userId));
+  async getJournalEntries(tenantId: string, userId?: string, startDate?: Date, endDate?: Date): Promise<JournalEntry[]> {
+    let whereClause = eq(journalEntries.tenantId, tenantId);
     
-    if (startDate && endDate) {
-      query = query.where(and(
-        eq(journalEntries.userId, userId),
-        gte(journalEntries.date, startDate),
-        lte(journalEntries.date, endDate)
-      ));
+    if (userId) {
+      whereClause = and(whereClause, eq(journalEntries.userId, userId))!;
     }
     
-    return await query.orderBy(desc(journalEntries.date));
+    if (startDate && endDate) {
+      whereClause = and(
+        whereClause,
+        gte(journalEntries.date, startDate),
+        lte(journalEntries.date, endDate)
+      )!;
+    }
+    
+    return await db
+      .select()
+      .from(journalEntries)
+      .where(whereClause)
+      .orderBy(desc(journalEntries.date));
   }
 
   async createJournalEntry(entry: InsertJournalEntry): Promise<JournalEntry> {
@@ -299,11 +497,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   // User preferences
-  async getUserPreferences(userId: string): Promise<UserPreferences | undefined> {
+  async getUserPreferences(tenantId: string, userId: string): Promise<UserPreferences | undefined> {
     const [prefs] = await db
       .select()
       .from(userPreferences)
-      .where(eq(userPreferences.userId, userId));
+      .where(and(eq(userPreferences.tenantId, tenantId), eq(userPreferences.userId, userId)));
     return prefs;
   }
 
@@ -323,20 +521,30 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Analytics
-  async getUserStats(userId: string): Promise<{
+  async getUserStats(tenantId: string, userId?: string): Promise<{
     totalTasks: number;
     completedTasks: number;
     avgMood: number;
     avgEnergy: number;
     totalConversations: number;
   }> {
+    let taskWhereClause = eq(tasks.tenantId, tenantId);
+    let moodWhereClause = eq(moodEntries.tenantId, tenantId);
+    let convWhereClause = eq(conversations.tenantId, tenantId);
+    
+    if (userId) {
+      taskWhereClause = and(taskWhereClause, eq(tasks.userId, userId))!;
+      moodWhereClause = and(moodWhereClause, eq(moodEntries.userId, userId))!;
+      convWhereClause = and(convWhereClause, eq(conversations.userId, userId))!;
+    }
+
     const [taskStats] = await db
       .select({
         totalTasks: sql<number>`count(*)`,
         completedTasks: sql<number>`count(case when status = 'completed' then 1 end)`,
       })
       .from(tasks)
-      .where(eq(tasks.userId, userId));
+      .where(taskWhereClause);
 
     const [moodStats] = await db
       .select({
@@ -344,14 +552,14 @@ export class DatabaseStorage implements IStorage {
         avgEnergy: sql<number>`avg(energy)`,
       })
       .from(moodEntries)
-      .where(eq(moodEntries.userId, userId));
+      .where(moodWhereClause);
 
     const [convStats] = await db
       .select({
         totalConversations: sql<number>`count(*)`,
       })
       .from(conversations)
-      .where(eq(conversations.userId, userId));
+      .where(convWhereClause);
 
     return {
       totalTasks: taskStats.totalTasks || 0,

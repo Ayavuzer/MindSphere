@@ -19,11 +19,16 @@ import {
   TrendingUp,
   Heart,
   Star,
-  Shield
+  Shield,
+  Bot
 } from 'lucide-react';
 import { useChat } from '@/hooks/useChat';
 import { useVoice } from '@/hooks/useVoice';
 import { useAuth } from '@/hooks/useAuth';
+import { useProvider } from '@/contexts/ProviderContext';
+import { ProviderSelector } from '@/components/provider-selector';
+import { ProviderStatusBar } from '@/components/provider-status-bar';
+import { QuickProviderSwitcher } from '@/components/quick-provider-switcher';
 import { Message } from '@/types';
 
 interface ChatInterfaceProps {
@@ -33,11 +38,13 @@ interface ChatInterfaceProps {
 export function ChatInterface({ conversationId }: ChatInterfaceProps) {
   const [inputMessage, setInputMessage] = useState('');
   const [currentConversationId, setCurrentConversationId] = useState(conversationId);
+  const [isProviderSwitcherOpen, setIsProviderSwitcherOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const { user } = useAuth();
   const { messages, sendMessage, isTyping, isLoading } = useChat(currentConversationId);
   const { startListening, stopListening, isListening, transcript, synthesizeSpeech } = useVoice();
+  const { selectedProvider, selectedModel, setSelectedProvider, setSelectedModel } = useProvider();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -53,6 +60,20 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
     }
   }, [transcript]);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Ctrl+P or Cmd+P to open provider switcher
+      if ((event.ctrlKey || event.metaKey) && event.key === 'p') {
+        event.preventDefault();
+        setIsProviderSwitcherOpen(true);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
     
@@ -60,7 +81,12 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
     setInputMessage('');
     
     try {
-      const newConversationId = await sendMessage(messageContent, currentConversationId);
+      const newConversationId = await sendMessage(
+        messageContent, 
+        currentConversationId, 
+        selectedProvider || undefined,
+        selectedModel || undefined
+      );
       if (!currentConversationId) {
         setCurrentConversationId(newConversationId);
       }
@@ -202,6 +228,30 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
           </div>
           
           <div className="flex items-center space-x-2">
+            {/* Desktop Provider Selector */}
+            <div className="hidden sm:block">
+              <ProviderSelector
+                selectedProvider={selectedProvider || undefined}
+                selectedModel={selectedModel || undefined}
+                onProviderChange={setSelectedProvider}
+                onModelChange={setSelectedModel}
+                size="sm"
+                variant="model-select"
+              />
+            </div>
+            
+            {/* Mobile Provider Switcher Button */}
+            <div className="sm:hidden">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsProviderSwitcherOpen(true)}
+                className="flex items-center gap-1"
+              >
+                <Bot className="h-3 w-3" />
+                <span className="text-xs">AI</span>
+              </Button>
+            </div>
             <Button variant="outline" size="sm" onClick={handleVoiceToggle}>
               <Mic className="mr-1" size={14} />
               {isListening ? 'Stop' : 'Voice Mode'}
@@ -347,6 +397,17 @@ export function ChatInterface({ conversationId }: ChatInterfaceProps) {
           </div>
         </div>
       </div>
+      
+      {/* Provider Status Bar */}
+      <div className="hidden sm:block">
+        <ProviderStatusBar variant="compact" />
+      </div>
+      
+      {/* Quick Provider Switcher Modal */}
+      <QuickProviderSwitcher
+        isOpen={isProviderSwitcherOpen}
+        onClose={() => setIsProviderSwitcherOpen(false)}
+      />
     </div>
   );
 }

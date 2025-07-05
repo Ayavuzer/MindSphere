@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Link } from 'wouter';
 import { 
   CheckSquare, 
   Calendar, 
@@ -12,7 +14,8 @@ import {
   Brain,
   Target,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Settings
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -32,6 +35,10 @@ export default function Dashboard() {
     queryKey: ['/api/mood'],
   });
 
+  const { data: configStatus } = useQuery({
+    queryKey: ['/api/config/status'],
+  });
+
   const completionRate = stats ? (stats.completedTasks / stats.totalTasks) * 100 : 0;
   const urgentTasks = tasks.filter((task: any) => task.priority === 'high' && task.status !== 'completed');
   const latestHealth = healthData?.[0];
@@ -48,12 +55,38 @@ export default function Dashboard() {
               <p className="text-[var(--text-secondary)]">Your personal overview</p>
             </div>
             <div className="flex items-center space-x-2">
-              <Badge variant="outline" className="text-green-400 border-green-400">
-                <div className="w-2 h-2 bg-green-400 rounded-full mr-2"></div>
-                All Systems Online
-              </Badge>
+              {configStatus?.openaiConfigured ? (
+                <Badge variant="outline" className="text-green-400 border-green-400">
+                  <div className="w-2 h-2 bg-green-400 rounded-full mr-2"></div>
+                  All Systems Online
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-yellow-400 border-yellow-400">
+                  <AlertCircle className="w-3 h-3 mr-1" />
+                  Setup Required
+                </Badge>
+              )}
             </div>
           </div>
+          
+          {/* Configuration Warning */}
+          {configStatus && !configStatus.openaiConfigured && (
+            <Alert className="mt-4 border-yellow-500 bg-yellow-50">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>OpenAI API Key Required</AlertTitle>
+              <AlertDescription className="flex items-center justify-between">
+                <span>
+                  Please configure your OpenAI API key to enable AI features like chat, insights, and voice recognition.
+                </span>
+                <Link href="/preferences">
+                  <Button variant="outline" size="sm" className="ml-4">
+                    <Settings className="w-4 h-4 mr-2" />
+                    Configure
+                  </Button>
+                </Link>
+              </AlertDescription>
+            </Alert>
+          )}
         </div>
 
         {/* Main Content */}
